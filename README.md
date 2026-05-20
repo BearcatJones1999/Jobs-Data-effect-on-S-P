@@ -1,74 +1,97 @@
-# Jobs Data → S&P 500 Event Study
-
-An event-study analysis of how monthly U.S. employment releases move the S&P 500, 
-decomposing index reactions into the *surprise* component (actual − consensus) 
-versus the headline print.
-
-Built as a personal research project to practice the macro-event-to-equity-index 
-workflow: pulling release data, aligning to market timestamps, isolating the 
-surprise component, and measuring conditional return distributions.
-
+# Payroll Surprise → S&P 500 Returns
+ 
+A predictive regression of next-month S&P 500 returns on the *surprise* component of U.S. nonfarm payroll releases, where surprise is extracted from a real-time expanding-window ARIMA forecast (no look-ahead, no reliance on survey consensus data).
+ 
+Built as a personal research project to practice the macro-event-to-equity-index workflow: building a model-based expectation series, isolating the unanticipated component of a macro release, and testing whether that surprise carries predictive information for forward equity returns.
+ 
 ## Research Question
-
-Does the S&P 500's reaction to the monthly jobs report scale with the *surprise* 
-relative to consensus, or does the market respond primarily to the headline 
-print regardless of expectations? Are reactions symmetric for upside vs. downside 
-surprises?
-
+ 
+Does the *unanticipated* portion of U.S. nonfarm payroll growth contain information about next-month S&P 500 returns? If the relationship is negative — i.e., positive payroll surprises predict lower forward equity returns — that's consistent with a discount-rate channel in which strong labor data raises expected policy tightening and compresses valuations ("good news is bad news").
+ 
 ## Data
-
-- **Release**: [NFP / Unemployment Rate / both — TELL ME WHICH]
-- **Consensus**: [Source — Bloomberg? Refinitiv? FRED ALFRED vintages?]
-- **Equity data**: SPY [daily / intraday] returns from [data source]
-- **Sample**: [START YEAR] – [END YEAR], [N] release events
-- **Frequency**: First Friday of each month, 8:30 ET release
-
+ 
+- **S&P 500 Index (^GSPC)** — monthly adjusted close, Yahoo Finance
+- **Nonfarm Payrolls (PAYEMS)** — monthly level, FRED (pulled directly via public CSV endpoint, no API key)
+- **Sample**: January 2005 – February 2026, monthly frequency
 ## Methodology
-
-### 1. Surprise Construction
-`surprise = (actual − consensus) / std(actual − consensus)` 
-Standardized so coefficients are interpretable as return per 1σ surprise.
-
-### 2. Event Windows
-- **Same-day**: SPY close-to-close on release day
-- [Optional: pre-release drift, post-release drift, 5-day window]
-
-### 3. Regressions
-- `SPY_return = α + β · surprise + ε` (OLS, HAC standard errors)
-- [Any subsample analysis: pre/post-2020? high/low VIX regimes?]
-
+ 
+### 1. Stationary transforms
+ 
+- Equity returns: monthly log returns, `r_t = log(P_t) − log(P_{t−1})`
+- Payroll change: monthly first difference of the payroll level, `ΔPay_t = Pay_t − Pay_{t−1}` (PAYEMS is in thousands of workers)
+ADF tests confirm both transformed series are stationary over the sample.
+ 
+### 2. Surprise construction (no look-ahead)
+ 
+Survey-based consensus data is not used. Instead, the surprise is the one-step-ahead forecast error from an **expanding-window ARIMA(1,0,1) with constant** on payroll changes:
+ 
+```
+Surprise_t = ΔPay_t − E_{t−1}[ΔPay_t]
+```
+ 
+At each month *t*, the ARIMA model is refit on data through *t−1* only, and the next-period forecast is generated out of sample. A 36-month minimum training window protects against unstable early-sample estimates.
+ 
+The surprise is then standardized using a 36-month rolling standard deviation so the regression coefficient is interpretable as the return impact of a +1σ payroll surprise.
+ 
+### 3. Predictive regression
+ 
+```
+r_{t+1} = α + β · Surprise_t^(z) + γ_0 · r_t + γ_1 · r_{t−1} + ε_{t+1}
+```
+ 
+Surprise measured at *t*, return measured at *t+1* — surprise leads the equity return by one period to avoid contemporaneous endogeneity. Return lags are included to control for short-run momentum/reversal dynamics. Newey–West (HAC) standard errors with 6 lags handle residual autocorrelation and heteroskedasticity in monthly data.
+ 
+A second ARDL-style specification using payroll *growth* (rather than the model-implied surprise) with distributed lags is included as a comparison.
+ 
+### 4. Diagnostics
+ 
+- **ADF tests** on returns and payroll growth (stationarity)
+- **Ljung–Box** on residuals at 6 and 12 lags (residual autocorrelation)
+- **ARCH(12)** test (conditional heteroskedasticity)
 ## Key Findings
-
-[FILL IN — needs your actual numbers. Template:]
-
-- Coefficient on standardized NFP surprise: **β = [X]%** per 1σ surprise (t = [Y])
-- R² = [Z] — the surprise component explains [Z]% of SPY's release-day variance
-- [Asymmetry finding: do negative surprises move the index more than positive ones? 
-   This is the classic "bad news is bad news in tightening regimes" result]
-- [Regime finding: does the relationship flip sign during Fed easing vs. tightening cycles?]
-
-## Caveats
-
-- **Single release type** — extending to CPI, FOMC, JOLTS, and PCE would 
-  test whether the surprise-response pattern generalizes
-- **Daily resolution** — intraday data around 8:30 ET would more cleanly isolate 
-  the release impact from later-session noise
-- **No vol component** — equity-index reaction is one channel; the implied vol 
-  surface and term structure response is the natural next layer
-- **Consensus quality** — Bloomberg consensus surveys have known biases (herding, 
-  late revisions); using ALFRED vintages would give a cleaner expectations measure
-- **Regime dependence** — the surprise → return relationship is widely documented 
-  to flip sign with Fed posture (good news is good news vs. good news is bad news); 
-  pooling across regimes may obscure this
-
+ 
+> The notebook produces full regression output, ADF stats, and diagnostic tests when run.  Headline results to be added after a final clean run.
+ 
+**Expected sign**, from the discount-rate channel framing: β < 0. A positive payroll surprise (stronger-than-expected jobs growth) raises expected policy tightening, which compresses next-month equity valuations.
+ 
+[INSERT after running the notebook]:
+- Coefficient on standardized payroll surprise (β): _______
+- HAC t-statistic: _______
+- R²: _______
+- Number of observations: _______
+- Ljung–Box p-values (6, 12 lags): _______
+- ARCH(12) p-value: _______
+## Conceptual Framework
+ 
+A negative coefficient on payroll surprises is consistent with the macro-finance **discount-rate channel**:
+ 
+1. Stronger-than-expected payroll growth ⇒ inflation pressure
+2. Inflation pressure ⇒ higher expected policy rates
+3. Higher discount rates ⇒ lower equity valuations
+This is the "good news is bad news" pattern that dominates tightening regimes (e.g., 2022–2023). In easing regimes (e.g., 2009–2015 ZIRP), the same surprise can flip sign as the growth channel dominates the rate channel — i.e., strong jobs data is read as a recovery signal rather than a tightening trigger. This regime dependence is a known limitation of the pooled specification used here.
+ 
+## Caveats and Limitations
+ 
+1. **Model-implied surprise, not survey consensus**. The ARIMA(1,0,1) forecast is a reasonable benchmark for what was "expected," but professional consensus (Bloomberg, Refinitiv) reflects forward-looking information the ARIMA can't see (initial-claims trends, ADP, regional Fed surveys). Using a real consensus series would give a cleaner surprise measure.
+2. **Monthly horizon**. The next-month window dilutes the immediate market reaction to the release. A daily or intraday event study around the release timestamp (8:30 ET on the first Friday) would isolate the unanticipated-news impact more cleanly.
+3. **Pooled across regimes**. Pre-/post-2008, ZIRP era, and 2022+ tightening cycle likely have different surprise-response relationships. A regime-switching or interacted specification (e.g., surprise × Fed-funds-direction dummy) would better characterize when the discount-rate channel dominates.
+4. **No vol-surface component**. The equity-index reaction is one channel; the implied volatility surface response (VIX, SPX vol term structure) around payroll releases is the natural next layer for an options-aware version of this work.
+5. **Single release type**. Extending to CPI, FOMC, JOLTS, and PCE surprises would test whether the surprise-response pattern generalizes across macro releases.
 ## Extensions
-
-- Add CPI and FOMC surprise series
-- Extend to NDX (more rate-sensitive) and sector ETFs (XLF should respond differently 
-  than XLU under rate-news regimes)
-- Layer in VIX and SPX implied vol term structure response
-- Look at intraday timestamps around the 8:30 release using minute bars
-
+ 
+- Replace ARIMA-based surprise with Bloomberg/Refinitiv consensus surprise
+- Move to intraday SPX/SPY data with a tight window around the 8:30 ET release
+- Add CPI, FOMC, and JOLTS to a multi-release surprise panel
+- Layer in SPX implied volatility term structure response to surprises
+- Regime-conditional specification (Fed easing vs. tightening, VIX regime)
+- Sector-level decomposition (XLF vs. XLU vs. XLK should respond differently to rate-news surprises)
+## Stack
+ 
+Python, pandas, NumPy, statsmodels (SARIMAX, OLS with HAC, ADF, Ljung–Box, ARCH tests), yfinance, FRED public CSV endpoint.
+ 
+---
+ 
+*Educational research project. Not investment advice.*
 ## Stack
 
 Python, pandas, statsmodels, FRED API, [Yahoo / Alpaca / other for SPY data]
